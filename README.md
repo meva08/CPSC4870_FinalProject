@@ -1,1 +1,3 @@
-# CPSC4870_FinalProject
+# 3D Spatial Modeling and Computing Final Project
+
+By Maryeva Gonzalez
