@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>CPSC 487/587</title>
+    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
+    <script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lil-gui@0.19.1/dist/lil-gui.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/10.3.0/math.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/quaternion@1.5.1/quaternion.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/numeric@1.2.6/numeric-1.2.6.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/stats.js@0.17.0/build/stats.min.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+              "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+              "three/": "https://unpkg.com/three@0.160.0/"
+            }
+        }
+    </script>
+</head>
+<body>
+    <script type="module">
+        import { ThreeEngine } from "./js/utils/utils_three.js";
+        import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+        import { get_default_lil_gui, refresh_displays } from "./js/utils/utils_three.js";
+        import * as THREE from 'three';
+
+        let engine = ThreeEngine.new_default_3d();
+        engine.scene.background = new THREE.Color(0x0a2a4a);
+        engine.scene.fog = new THREE.FogExp2(0x0a2a4a, 0.08);
+
+        // gui setup
+        let settings = 
+        {
+            orange_theta: 0,
+            blue_theta: 0,
+            orange_speed: 1,
+            blue_speed: 1,
+            show_path: true,
+        };
+
+        let gui = get_default_lil_gui();
+        let orangeFolder = gui.addFolder("Orange Fish (SE3)");
+        orangeFolder.add(settings, "orange_theta", 0, 1).name("theta");
+        orangeFolder.add(settings, "orange_speed", 0, 5).name("speed");
+
+        let blueFolder = gui.addFolder("Blue Fish (Implicit SE3)");
+        blueFolder.add(settings, "blue_theta", 0, 1).name("theta");
+        blueFolder.add(settings, "blue_speed", 0, 5).name("speed");
+        gui.add(settings, "show_path", true, false).name("Show Path");
+        gui.add({ reset: resetSimulation }, "reset").name("Reset");
+
+        function resetSimulation()
+        {
+            settings.orange_theta = 0;
+            settings.blue_theta = 0;
+
+            settings.orange_speed = 1;
+            settings.blue_speed = 1;
+
+            settings.show_path = true;
+            refresh_displays(gui);
+        }
+
+        // load in koi meshes from blender exports
+        const loader = new GLTFLoader();
+        let koiParts = { head: null, body: null, tail: null, leftFin: null, rightFin: null };
+        let fish1Meshes = { head: null, body: null, tail: null, leftFin: null, rightFin: null };
+
+        loader.load('./models/orangeKoi/koifishHead.glb', (gltf) =>{ gltf.scene.position.set(0, 0, 0);koiParts.head = gltf.scene; console.log('head loaded'); }, undefined, (e) => console.error('head failed:', e));
+        loader.load('./models/orangeKoi/koifishBody.glb', (gltf) => { gltf.scene.position.set(0, 0, 0); koiParts.body = gltf.scene; console.log('body loaded'); }, undefined, (e) => console.error('body failed:', e));
+        loader.load('./models/orangeKoi/koifishTail.glb', (gltf) => { gltf.scene.position.set(0, 0, 0); koiParts.tail = gltf.scene; console.log('tail loaded'); }, undefined, (e) => console.error('tail failed:', e));
+        loader.load('./models/orangeKoi/koifishLeftFin.glb', (gltf) => { gltf.scene.position.set(0, 0, 0); koiParts.leftFin = gltf.scene; console.log('leftFin loaded'); }, undefined, (e) => console.error('leftFin failed:', e));
+        loader.load('./models/orangeKoi/koifishRightFin.glb', (gltf) => { gltf.scene.position.set(0, 0, 0); koiParts.rightFin = gltf.scene; console.log('rightFin loaded'); }, undefined, (e) => console.error('rightFin failed:', e));
+
+        let koiParts2 = { head: null, body: null, tail: null, leftFin: null, rightFin: null };
+        let fish2Meshes = { head: null, body: null, tail: null, leftFin: null, rightFin: null };
+        loader.load('./models/blueKoi/koifishHead.glb', (gltf) => { gltf.scene.position.set(0,0,0); koiParts2.head = gltf.scene; }, undefined, (e) => console.error(e));
+        loader.load('./models/blueKoi/koifishBody.glb', (gltf) => { gltf.scene.position.set(0,0,0); koiParts2.body = gltf.scene; }, undefined, (e) => console.error(e));
+        loader.load('./models/blueKoi/koifishTail.glb', (gltf) => { gltf.scene.position.set(0,0,0); koiParts2.tail = gltf.scene; }, undefined, (e) => console.error(e));
+        loader.load('./models/blueKoi/koifishLeftFin.glb', (gltf) => { gltf.scene.position.set(0,0,0); koiParts2.leftFin = gltf.scene; }, undefined, (e) => console.error(e));
+        loader.load('./models/blueKoi/koifishRightFin.glb', (gltf) => { gltf.scene.position.set(0,0,0); koiParts2.rightFin = gltf.scene; }, undefined, (e) => console.error(e));
+
+        // add meshes to fish
+        const SCALE = 0.1;
+        function ensureClones()
+        {
+            for (let key of Object.keys(koiParts))
+            {
+                if (koiParts[key] && !fish1Meshes[key])
+                {
+                    fish1Meshes[key] = koiParts[key].clone();
+                    fish1Meshes[key].scale.setScalar(SCALE);
+                    engine.scene.add(fish1Meshes[key]);
+                }
+                if (koiParts2[key] && !fish2Meshes[key])
+                {
+                    fish2Meshes[key] = koiParts2[key].clone();
+                    fish2Meshes[key].scale.setScalar(SCALE);
+                    engine.scene.add(fish2Meshes[key]);
+                }
+            }
+        }
+        
+
+        // regular SE(3) transforms
+        function applySE3(mesh, pose, position)
+        {
+            let s = SCALE;
+            let R = pose.rotationMatrix.clone();
+
+            // flip mesh so the fish looks right
+            let flipMat = new THREE.Matrix4().makeRotationY(Math.PI);
+            R.multiply(flipMat);
+
+            let T = new THREE.Matrix4().set(
+                R.elements[0]*s, R.elements[4]*s, R.elements[8]*s,  position.x,
+                R.elements[1]*s, R.elements[5]*s, R.elements[9]*s,  position.y,
+                R.elements[2]*s, R.elements[6]*s, R.elements[10]*s, position.z,
+                0, 0, 0, 1);
+
+            mesh.matrixAutoUpdate = false;
+            mesh.matrix.copy(T);
+        }
+
+        // implicit SE(3) with unit quaternion
+        function applyImplicit(mesh, pose)
+        {
+            mesh.position.copy(pose.position);
+            mesh.quaternion.copy(pose.quaternion);
+        }
+
+        // math helpers
+        function normalize(v)
+        {
+            let len = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+            return [v[0]/len, v[1]/len, v[2]/len];
+        }
+
+        
+        let r = 2.0;
+        const WIGGLE_AMP = 0.25;  // max wiggle in radians
+        const WIGGLE_FREQ = 6.0; // wiggle frequency const
+
+        // draws a 3-segment fish centered at baseAngle on the circle
+        const MODEL_FORWARD = new THREE.Vector3(0, 0, 1);
+
+        function computePose(baseAngle, wigglePhase)
+        {
+            let fwd = new THREE.Vector3(Math.sin(baseAngle), 0, -Math.cos(baseAngle)).normalize();
+            let up = new THREE.Vector3(0, 1, 0);
+            let right = new THREE.Vector3().crossVectors(up, fwd).normalize();
+            up = new THREE.Vector3().crossVectors(fwd, right).normalize();
+
+            // add in bobbing movement for the fish
+            let bob = Math.sin(baseAngle * 2 + wigglePhase) * 0.3;
+            let bodyPos = new THREE.Vector3(r * Math.cos(baseAngle), bob, r * Math.sin(baseAngle));
+
+            let bobDeriv = Math.cos(baseAngle * 2 + wigglePhase) * 0.6;
+            let tiltAngle = Math.atan2(bobDeriv, 1.0) * 0.5;
+
+            // regular SE(3)
+            // make the SE(3) transformations needed
+            let flipMat = new THREE.Matrix4().makeRotationY(Math.PI);
+            let tiltMat = new THREE.Matrix4().makeRotationAxis(right, tiltAngle);
+            let baseMat = new THREE.Matrix4().makeBasis(right, up, fwd);
+
+            let se3Matrix = tiltMat.clone().multiply(baseMat).multiply(flipMat);
+
+            // implicit SE(3) quaternion
+            let quat = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(right, up, fwd));
+            const correction = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+            quat.premultiply(correction);
+            quat.multiply(new THREE.Quaternion().setFromAxisAngle(right, tiltAngle));
+
+            return {
+                position: bodyPos,
+                rotationMatrix: se3Matrix,
+                quaternion: quat,
+                fwd, right, up
+            };
+        }
+
+    function drawFish(baseAngle, wigglePhase, meshes, useQuat)
+    {
+        const pose = computePose(baseAngle, wigglePhase);
+        const correction = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI);
+
+        const bodyMesh = meshes["body"];
+        if (!bodyMesh) return;
+
+        if (useQuat)
+        {
+            applyImplicit(bodyMesh, pose);
+            bodyMesh.quaternion.multiply(correction);
+        } 
+        else
+        {
+            applySE3(bodyMesh, pose, pose.position);
+        }
+
+        let headOffset = new THREE.Vector3(0, 0, 0.8);
+        let tailOffset = new THREE.Vector3(0, 0, -0.8);
+
+        let headMesh = meshes["head"];
+        if (headMesh)
+        {
+            let p = pose.position.clone().add(headOffset.clone().applyQuaternion(pose.quaternion));
+            if (useQuat)
+            {
+                headMesh.position.copy(p);
+                headMesh.quaternion.copy(pose.quaternion).multiply(correction);
+            } 
+            else
+            {
+                // extract forward direction from the SE(3) matrix to compute offset
+                let matFwd = new THREE.Vector3( pose.rotationMatrix.elements[8], pose.rotationMatrix.elements[9], pose.rotationMatrix.elements[10]);
+                let p = pose.position.clone().add(matFwd.multiplyScalar(0.8));
+                applySE3(headMesh, pose, p);
+            }
+        }
+
+        let tailMesh = meshes["tail"];
+        if (tailMesh)
+        {
+            let tailWiggle = Math.sin(wigglePhase * WIGGLE_FREQ + 1.0) * WIGGLE_AMP;
+            let p = pose.position.clone().add(tailOffset.clone().applyQuaternion(pose.quaternion));
+            
+            if (useQuat)
+            {
+                tailMesh.position.copy(p);
+                tailMesh.quaternion.copy(pose.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), tailWiggle)).multiply(correction);
+            }
+            else
+            {
+                let wiggleMat = new THREE.Matrix4().makeRotationY(tailWiggle);
+                let tailMat = pose.rotationMatrix.clone();
+                tailMat.multiply(wiggleMat);
+
+                let matFwd = new THREE.Vector3(pose.rotationMatrix.elements[8], pose.rotationMatrix.elements[9],pose.rotationMatrix.elements[10]);
+                let p = pose.position.clone().add(matFwd.multiplyScalar(-0.8));
+
+                let tailPose = { rotationMatrix: tailMat };
+                applySE3(tailMesh, tailPose, p);
+            }
+        }
+
+        let flap = Math.sin(wigglePhase * 3.0) * 0.15;
+
+        let leftFin = meshes["leftFin"];
+        if (leftFin)
+        {
+            let p = pose.position.clone().add(new THREE.Vector3(0.35, 0, 0).applyQuaternion(pose.quaternion));
+            if (useQuat)
+            {
+                leftFin.position.copy(p);
+                leftFin.quaternion.copy(pose.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(pose.fwd, flap)).multiply(correction);
+            } 
+            else
+            {
+                // build flap as a rotation matrix around fwd axis
+                let flapAngle = Math.sin(wigglePhase * 3.0) * 0.15;
+                let flapMat = new THREE.Matrix4().makeRotationAxis(pose.fwd, flapAngle);
+                let finMat = new THREE.Matrix4().makeRotationFromQuaternion(pose.quaternion);
+                finMat.premultiply(flapMat);
+
+                // build a pose with the fin's rotation matrix
+                let finPose = { rotationMatrix: finMat };
+                applySE3(leftFin, finPose, p);
+            }
+        }
+
+        let rightFin = meshes["rightFin"];
+        if (rightFin)
+        {
+            let p = pose.position.clone().add(new THREE.Vector3(-0.35, 0, 0).applyQuaternion(pose.quaternion));
+            if (useQuat)
+            {
+                rightFin.position.copy(p);
+                rightFin.quaternion.copy(pose.quaternion).multiply(new THREE.Quaternion().setFromAxisAngle(pose.fwd, -flap)).multiply(correction);
+            } 
+            else
+            {
+                // build flap as a rotation matrix around fwd axis
+                let flapAngle = Math.sin(wigglePhase * 3.0) * 0.15;
+                let flapMat = new THREE.Matrix4().makeRotationAxis(pose.fwd, flapAngle);
+                let finMat = new THREE.Matrix4().makeRotationFromQuaternion(pose.quaternion);
+                finMat.premultiply(flapMat);
+
+                // build a pose with the fin's rotation matrix
+                let finPose = { rotationMatrix: finMat };
+                applySE3(rightFin, finPose, p);
+            }
+        }
+    }
+        // camera setup
+        engine.camera.position.set(5, 5, 5);
+        engine.camera.lookAt(0, 0, 0);
+
+        engine.animation_loop(function ()
+        {
+            settings.orange_theta += 0.01 * settings.orange_speed;
+            settings.blue_theta   += 0.01 * settings.blue_speed;
+            ensureClones();
+
+            let time = performance.now() * 0.001;
+
+            drawFish(settings.orange_theta, time, fish1Meshes, false);
+            drawFish(settings.blue_theta + Math.PI, time + Math.PI, fish2Meshes, true);
+
+            // path ring
+            if (settings.show_path)
+            {
+                let N = 80;
+                for (let i = 0; i < N; i++) {
+                    let a0 = (i / N) * 2 * Math.PI;
+                    let a1 = ((i+1) / N) * 2 * Math.PI;
+                    engine.draw_debug_line(
+                        [r * Math.cos(a0), r * Math.sin(a0), 0],
+                        [r * Math.cos(a1), r * Math.sin(a1), 0],
+                        false, 0.008, 0x445566
+                    );
+                }
+            }
+        });
+ 
+    </script>
+</body>
+</html>
